@@ -1,6 +1,6 @@
-import type { AuthConfig } from "@auth/core"
-import GitHub from "@auth/core/providers/github"
-import CredentialsProvider from "@auth/core/providers/credentials"
+import NextAuth from "next-auth"
+import GitHub from "next-auth/providers/github"
+import CredentialsProvider from "next-auth/providers/credentials"
 import { createDb, Db } from "./db"
 import { accounts, users, roles, userRoles } from "./schema"
 import { eq, and } from "drizzle-orm"
@@ -11,7 +11,6 @@ import { authSchema, AuthSchema } from "@/lib/validation"
 import { generateAvatarUrl } from "./avatar"
 import { getUserId } from "./apiKey"
 import { verifyTurnstileToken } from "./turnstile"
-import NextAuth from "next-auth"
 
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   [ROLES.EMPEROR]: "Owner",
@@ -114,36 +113,19 @@ const AUTH_SECRET = "6b8e3a2410f97bc45df891c2803bda9e172a50c8e3146059d7b4c919d85
 const AUTH_GITHUB_ID = "Ov23li8VQpR7E7Zf0AdQ"
 const AUTH_GITHUB_SECRET = "776bcf86d1b447cd75bb13ea2395bb1cce96096a"
 
-export const authConfig: AuthConfig = {
+export const {
+  handlers: { GET, POST },
+  auth,
+  signIn,
+  signOut
+} = NextAuth({
+  debug: false,
   trustHost: true,
-  basePath: "/api/auth",
-  secret: [AUTH_SECRET],
-  logger: {
-    error(error) {
-      console.error("[NextAuth Logger Error]", error)
-      try {
-        const errObj = {
-          name: (error as any)?.name || "Error",
-          message: (error as any)?.message || String(error),
-          stack: (error as any)?.stack || "",
-          type: (error as any)?.type || "",
-          cause: (error as any)?.cause || null,
-        };
-        (globalThis as any).__LAST_AUTH_ERROR__ = errObj
-      } catch (_e) {}
-    },
-    warn(code) {
-      console.warn("[NextAuth Logger Warn]", code)
-    },
-    debug(message, metadata) {
-      console.log("[NextAuth Logger Debug]", message, metadata)
-    },
-  },
+  secret: AUTH_SECRET,
   providers: [
     GitHub({
       clientId: AUTH_GITHUB_ID,
       clientSecret: AUTH_GITHUB_SECRET,
-      checks: [],
       allowDangerousEmailAccountLinking: true,
     }),
     CredentialsProvider({
@@ -346,14 +328,7 @@ export const authConfig: AuthConfig = {
       return session
     },
   },
-}
-
-export const {
-  handlers: { GET, POST },
-  auth,
-  signIn,
-  signOut
-} = NextAuth(authConfig)
+})
 
 export async function register(username: string, password: string) {
   const db = createDb()
