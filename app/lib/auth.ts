@@ -183,6 +183,7 @@ export const {
   signIn,
   signOut
 } = NextAuth({
+  debug: true,
   trustHost: true,
   secret: process.env.AUTH_SECRET || "6b8e3a2410f97bc45df891c2803bda9e172a50c8e3146059d7b4c919d8548a62",
   providers: authProviders,
@@ -190,25 +191,54 @@ export const {
     strategy: "jwt",
   },
   callbacks: {
+    async signIn({ user, account, profile }) {
+      return true
+    },
     async jwt({ token, user, account, profile }) {
       if (account && user) {
         try {
           const db = createDb()
           const provider = account.provider
-          const providerAccountId = account.providerAccountId
+          const providerAccountId = String(account.providerAccountId)
+          const username = (profile as any)?.login || (user as any)?.username || null
 
-          // Find or create user in DB
-          let dbUser = await db.query.users.findFirst({
-            where: user.email ? eq(users.email, user.email) : eq(users.id, user.id),
+          // 1. Check if OAuth account is already linked
+          let existingAccount = await db.query.accounts.findFirst({
+            where: and(
+              eq(accounts.provider, provider),
+              eq(accounts.providerAccountId, providerAccountId)
+            ),
           })
 
+          let dbUser = null
+
+          if (existingAccount?.userId) {
+            dbUser = await db.query.users.findFirst({
+              where: eq(users.id, existingAccount.userId),
+            })
+          }
+
+          // 2. If user not found by account, try finding by email or username
+          if (!dbUser && user.email) {
+            dbUser = await db.query.users.findFirst({
+              where: eq(users.email, user.email),
+            })
+          }
+
+          if (!dbUser && username) {
+            dbUser = await db.query.users.findFirst({
+              where: eq(users.username, username),
+            })
+          }
+
+          // 3. Create user if still not found
           if (!dbUser) {
             const [newUser] = await db.insert(users)
               .values({
-                name: user.name || (profile as any)?.login || "User",
+                name: user.name || username || "User",
                 email: user.email || null,
                 image: user.image || (profile as any)?.avatar_url || null,
-                username: (profile as any)?.login || null,
+                username: username,
               })
               .returning()
             dbUser = newUser
@@ -217,14 +247,7 @@ export const {
           if (dbUser?.id) {
             token.id = dbUser.id
 
-            // Link account if not linked
-            const existingAccount = await db.query.accounts.findFirst({
-              where: and(
-                eq(accounts.provider, provider),
-                eq(accounts.providerAccountId, providerAccountId)
-              ),
-            })
-
+            // 4. Link account if not linked
             if (!existingAccount) {
               await db.insert(accounts).values({
                 userId: dbUser.id,
@@ -241,7 +264,7 @@ export const {
               })
             }
 
-            // Check and assign role
+            // 5. Check and assign default role
             const existingRole = await db.query.userRoles.findFirst({
               where: eq(userRoles.userId, dbUser.id),
             })
