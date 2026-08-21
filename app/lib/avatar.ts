@@ -11,10 +11,11 @@ const COLORS = [
   '#607D8B', // 蓝灰
 ];
 
-export function generateAvatarUrl(name: string): string {
-  const initial = name[0].toUpperCase();
+export function generateAvatarUrl(name?: string): string {
+  const safeName = (name && typeof name === 'string' && name.length > 0) ? name : "User";
+  const initial = safeName[0] ? safeName[0].toUpperCase() : "U";
   
-  const colorIndex = Array.from(name).reduce(
+  const colorIndex = Array.from(safeName).reduce(
     (acc, char) => acc + char.charCodeAt(0), 0
   ) % COLORS.length;
   
@@ -45,4 +46,4 @@ export function generateAvatarUrl(name: string): string {
   const base64 = Buffer.from(bytes).toString('base64');
   
   return `data:image/svg+xml;base64,${base64}`;
-} 
+}

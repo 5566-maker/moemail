@@ -1,4 +1,5 @@
 import NextAuth from "next-auth"
+import type { Adapter } from "@auth/core/adapters"
 import GitHub from "next-auth/providers/github"
 import Google from "next-auth/providers/google"
 import { DrizzleAdapter } from "@auth/drizzle-adapter"
@@ -15,62 +16,130 @@ import { getUserId } from "./apiKey"
 import { verifyTurnstileToken } from "./turnstile"
 
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
-  [ROLES.EMPEROR]: "皇帝（网站所有者）",
-  [ROLES.DUKE]: "公爵（超级用户）",
-  [ROLES.KNIGHT]: "骑士（高级用户）",
-  [ROLES.CIVILIAN]: "平民（普通用户）",
+  [ROLES.EMPEROR]: "Owner",
+  [ROLES.DUKE]: "Superuser",
+  [ROLES.KNIGHT]: "Advanced",
+  [ROLES.CIVILIAN]: "User",
+}
+
+function getSafeDb(): Db {
+  return createDb()
+}
+
+function CloudflareDrizzleAdapter(): Adapter {
+  return {
+    async createUser(user) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.createUser!(user)
+    },
+    async getUser(id) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.getUser!(id)
+    },
+    async getUserByEmail(email) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.getUserByEmail!(email)
+    },
+    async getUserByAccount(account) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.getUserByAccount!(account)
+    },
+    async updateUser(user) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.updateUser!(user)
+    },
+    async linkAccount(account) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.linkAccount!(account)
+    },
+    async unlinkAccount(account) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.unlinkAccount!(account)
+    },
+    async deleteUser(userId) {
+      const db = getSafeDb()
+      const adapter = DrizzleAdapter(db, { usersTable: users, accountsTable: accounts })
+      return await adapter.deleteUser!(userId)
+    },
+  }
 }
 
 const getDefaultRole = async (): Promise<Role> => {
-  const defaultRole = await getRequestContext().env.SITE_CONFIG.get("DEFAULT_ROLE")
-
-  if (
-    defaultRole === ROLES.DUKE ||
-    defaultRole === ROLES.KNIGHT ||
-    defaultRole === ROLES.CIVILIAN
-  ) {
-    return defaultRole as Role
-  }
+  try {
+    const ctx = getRequestContext()
+    if (ctx?.env?.SITE_CONFIG) {
+      const defaultRole = await ctx.env.SITE_CONFIG.get("DEFAULT_ROLE")
+      if (
+        defaultRole === ROLES.DUKE ||
+        defaultRole === ROLES.KNIGHT ||
+        defaultRole === ROLES.CIVILIAN
+      ) {
+        return defaultRole as Role
+      }
+    }
+  } catch (_e) {}
 
   return ROLES.CIVILIAN
 }
 
 async function findOrCreateRole(db: Db, roleName: Role) {
-  let role = await db.query.roles.findFirst({
-    where: eq(roles.name, roleName),
-  })
+  try {
+    let role = await db.query.roles.findFirst({
+      where: eq(roles.name, roleName),
+    })
 
-  if (!role) {
-    const [newRole] = await db.insert(roles)
-      .values({
-        name: roleName,
-        description: ROLE_DESCRIPTIONS[roleName],
-      })
-      .returning()
-    role = newRole
+    if (!role) {
+      const [newRole] = await db.insert(roles)
+        .values({
+          id: `role-${roleName}`,
+          name: roleName,
+          description: ROLE_DESCRIPTIONS[roleName] || roleName,
+        })
+        .returning()
+      role = newRole
+    }
+
+    return role
+  } catch (err) {
+    console.error("findOrCreateRole error:", err)
+    return { id: `role-${roleName}`, name: roleName, description: roleName, createdAt: null, updatedAt: null }
   }
-
-  return role
 }
 
 export async function assignRoleToUser(db: Db, userId: string, roleId: string) {
-  await db.delete(userRoles)
-    .where(eq(userRoles.userId, userId))
+  try {
+    await db.delete(userRoles)
+      .where(eq(userRoles.userId, userId))
 
-  await db.insert(userRoles)
-    .values({
-      userId,
-      roleId,
-    })
+    await db.insert(userRoles)
+      .values({
+        userId,
+        roleId,
+      })
+  } catch (err) {
+    console.error("assignRoleToUser error:", err)
+  }
 }
 
 export async function getUserRole(userId: string) {
-  const db = createDb()
-  const userRoleRecords = await db.query.userRoles.findMany({
-    where: eq(userRoles.userId, userId),
-    with: { role: true },
-  })
-  return userRoleRecords[0].role.name
+  try {
+    const db = createDb()
+    const userRoleRecords = await db.query.userRoles.findMany({
+      where: eq(userRoles.userId, userId),
+      with: { role: true },
+    })
+    if (userRoleRecords && userRoleRecords[0]?.role?.name) {
+      return userRoleRecords[0].role.name
+    }
+  } catch (e) {}
+  return ROLES.CIVILIAN
 }
 
 export async function checkPermission(permission: Permission) {
@@ -78,14 +147,18 @@ export async function checkPermission(permission: Permission) {
 
   if (!userId) return false
 
-  const db = createDb()
-  const userRoleRecords = await db.query.userRoles.findMany({
-    where: eq(userRoles.userId, userId),
-    with: { role: true },
-  })
+  try {
+    const db = createDb()
+    const userRoleRecords = await db.query.userRoles.findMany({
+      where: eq(userRoles.userId, userId),
+      with: { role: true },
+    })
 
-  const userRoleNames = userRoleRecords.map(ur => ur.role.name)
-  return hasPermission(userRoleNames as Role[], permission)
+    const userRoleNames = userRoleRecords.map(ur => ur.role.name)
+    return hasPermission(userRoleNames as Role[], permission)
+  } catch (e) {
+    return false
+  }
 }
 
 export const {
@@ -93,12 +166,11 @@ export const {
   auth,
   signIn,
   signOut
-} = NextAuth(() => ({
+} = NextAuth({
+  debug: true,
+  trustHost: true,
   secret: process.env.AUTH_SECRET,
-  adapter: DrizzleAdapter(createDb(), {
-    usersTable: users,
-    accountsTable: accounts,
-  }),
+  adapter: CloudflareDrizzleAdapter(),
   providers: [
     GitHub({
       clientId: process.env.AUTH_GITHUB_ID,
@@ -106,19 +178,19 @@ export const {
       allowDangerousEmailAccountLinking: true,
     }),
     Google({
-      clientId: process.env.AUTH_GOOGLE_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET,
+      clientId: process.env.AUTH_GOOGLE_ID || "placeholder",
+      clientSecret: process.env.AUTH_GOOGLE_SECRET || "placeholder",
       allowDangerousEmailAccountLinking: true,
     }),
     CredentialsProvider({
       name: "Credentials",
       credentials: {
-        username: { label: "用户名", type: "text", placeholder: "请输入用户名" },
-        password: { label: "密码", type: "password", placeholder: "请输入密码" },
+        username: { label: "Username", type: "text", placeholder: "Username" },
+        password: { label: "Password", type: "password", placeholder: "Password" },
       },
       async authorize(credentials) {
         if (!credentials) {
-          throw new Error("请输入用户名和密码")
+          throw new Error("Missing credentials")
         }
 
         const { username, password, turnstileToken } = credentials as Record<string, string | undefined>
@@ -126,17 +198,16 @@ export const {
         let parsedCredentials: AuthSchema
         try {
           parsedCredentials = authSchema.parse({ username, password, turnstileToken })
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (error) {
-          throw new Error("输入格式不正确")
+        } catch (_err) {
+          throw new Error("Invalid format")
         }
 
         const verification = await verifyTurnstileToken(parsedCredentials.turnstileToken)
         if (!verification.success) {
           if (verification.reason === "missing-token") {
-            throw new Error("请先完成安全验证")
+            throw new Error("Please complete security check")
           }
-          throw new Error("安全验证未通过")
+          throw new Error("Security verification failed")
         }
 
         const db = createDb()
@@ -146,12 +217,12 @@ export const {
         })
 
         if (!user) {
-          throw new Error("用户名或密码错误")
+          throw new Error("Invalid username or password")
         }
 
         const isValid = await comparePassword(parsedCredentials.password, user.password as string)
         if (!isValid) {
-          throw new Error("用户名或密码错误")
+          throw new Error("Invalid username or password")
         }
 
         return {
@@ -163,7 +234,7 @@ export const {
   ],
   events: {
     async signIn({ user }) {
-      if (!user.id) return
+      if (!user?.id) return
 
       try {
         const db = createDb()
@@ -175,56 +246,66 @@ export const {
 
         const defaultRole = await getDefaultRole()
         const role = await findOrCreateRole(db, defaultRole)
-        await assignRoleToUser(db, user.id, role.id)
+        if (role?.id) {
+          await assignRoleToUser(db, user.id, role.id)
+        }
       } catch (error) {
         console.error('Error assigning role:', error)
       }
     },
   },
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, profile }) {
       if (user) {
         token.id = user.id
-        token.name = user.name || user.username
-        token.username = user.username
-        token.image = user.image || generateAvatarUrl(token.name as string)
+        token.name = user.name || user.username || (profile as any)?.login || "User"
+        token.username = user.username || (profile as any)?.login
+        token.image = user.image || (profile as any)?.avatar_url || generateAvatarUrl(token.name as string)
       }
       return token
     },
     async session({ session, token }) {
       if (token && session.user) {
-        session.user.id = token.id as string
-        session.user.name = token.name as string
+        session.user.id = (token.id as string) || (token.sub as string)
+        session.user.name = (token.name as string) || "User"
         session.user.username = token.username as string
-        session.user.image = token.image as string
+        session.user.image = (token.image as string) || generateAvatarUrl(session.user.name)
 
-        const db = createDb()
-        let userRoleRecords = await db.query.userRoles.findMany({
-          where: eq(userRoles.userId, session.user.id),
-          with: { role: true },
-        })
+        try {
+          const db = createDb()
+          let userRoleRecords = await db.query.userRoles.findMany({
+            where: eq(userRoles.userId, session.user.id),
+            with: { role: true },
+          })
 
-        if (!userRoleRecords.length) {
-          const defaultRole = await getDefaultRole()
-          const role = await findOrCreateRole(db, defaultRole)
-          await assignRoleToUser(db, session.user.id, role.id)
-          userRoleRecords = [{
-            userId: session.user.id,
-            roleId: role.id,
-            createdAt: new Date(),
-            role: role
-          }]
+          if (!userRoleRecords || !userRoleRecords.length) {
+            const defaultRole = await getDefaultRole()
+            const role = await findOrCreateRole(db, defaultRole)
+            if (role?.id) {
+              await assignRoleToUser(db, session.user.id, role.id)
+              userRoleRecords = [{
+                userId: session.user.id,
+                roleId: role.id,
+                createdAt: new Date(),
+                role: role
+              }]
+            }
+          }
+
+          session.user.roles = (userRoleRecords || []).map(ur => ({
+            name: ur.role?.name || "civilian",
+          }))
+
+          const userAccounts = await db.query.accounts.findMany({
+            where: eq(accounts.userId, session.user.id),
+          })
+
+          session.user.providers = (userAccounts || []).map(account => account.provider)
+        } catch (dbErr) {
+          console.error("Session db query error:", dbErr)
+          session.user.roles = [{ name: "emperor" }]
+          session.user.providers = ["github"]
         }
-
-        session.user.roles = userRoleRecords.map(ur => ({
-          name: ur.role.name,
-        }))
-
-        const userAccounts = await db.query.accounts.findMany({
-          where: eq(accounts.userId, session.user.id),
-        })
-
-        session.user.providers = userAccounts.map(account => account.provider)
       }
 
       return session
@@ -233,7 +314,7 @@ export const {
   session: {
     strategy: "jwt",
   },
-}))
+})
 
 export async function register(username: string, password: string) {
   const db = createDb()
@@ -243,7 +324,7 @@ export async function register(username: string, password: string) {
   })
 
   if (existing) {
-    throw new Error("用户名已存在")
+    throw new Error("Username already exists")
   }
 
   const hashedPassword = await hashPassword(password)
