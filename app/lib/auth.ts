@@ -126,6 +126,7 @@ export const {
     GitHub({
       clientId: AUTH_GITHUB_ID,
       clientSecret: AUTH_GITHUB_SECRET,
+      issuer: "https://github.com/login/oauth",
       client: {
         token_endpoint_auth_method: "client_secret_post",
       },
