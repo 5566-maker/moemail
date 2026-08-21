@@ -126,7 +126,19 @@ export const {
     GitHub({
       clientId: AUTH_GITHUB_ID,
       clientSecret: AUTH_GITHUB_SECRET,
+      client: {
+        token_endpoint_auth_method: "client_secret_post",
+      },
+      checks: [],
       allowDangerousEmailAccountLinking: true,
+      profile(profile) {
+        return {
+          id: String(profile?.id || profile?.login || crypto.randomUUID()),
+          name: profile?.name || profile?.login || "User",
+          email: profile?.email || null,
+          image: profile?.avatar_url || null,
+        }
+      },
     }),
     CredentialsProvider({
       name: "Credentials",
