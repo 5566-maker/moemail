@@ -113,7 +113,7 @@ export async function checkPermission(permission: Permission) {
 const authProviders: any[] = [
   GitHub({
     clientId: process.env.AUTH_GITHUB_ID || "Ov23li8VQpR7E7Zf0AdQ",
-    clientSecret: process.env.AUTH_GITHUB_SECRET || "7908ea306545e2a68ac4bfceb26a2afb46b9e6a0",
+    clientSecret: process.env.AUTH_GITHUB_SECRET || "776bcf86d1b447cd75bb13ea2395bb1cce96096a",
     allowDangerousEmailAccountLinking: true,
   }),
   CredentialsProvider({
