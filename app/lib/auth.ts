@@ -161,77 +161,84 @@ export async function checkPermission(permission: Permission) {
   }
 }
 
+const authProviders: any[] = [
+  GitHub({
+    clientId: process.env.AUTH_GITHUB_ID || "Ov23li8VQpR7E7Zf0AdQ",
+    clientSecret: process.env.AUTH_GITHUB_SECRET || "7908ea306545e2a68ac4bfceb26a2afb46b9e6a0",
+    allowDangerousEmailAccountLinking: true,
+  }),
+  CredentialsProvider({
+    name: "Credentials",
+    credentials: {
+      username: { label: "Username", type: "text", placeholder: "Username" },
+      password: { label: "Password", type: "password", placeholder: "Password" },
+    },
+    async authorize(credentials) {
+      if (!credentials) {
+        throw new Error("Missing credentials")
+      }
+
+      const { username, password, turnstileToken } = credentials as Record<string, string | undefined>
+
+      let parsedCredentials: AuthSchema
+      try {
+        parsedCredentials = authSchema.parse({ username, password, turnstileToken })
+      } catch (_err) {
+        throw new Error("Invalid format")
+      }
+
+      const verification = await verifyTurnstileToken(parsedCredentials.turnstileToken)
+      if (!verification.success) {
+        if (verification.reason === "missing-token") {
+          throw new Error("Please complete security check")
+        }
+        throw new Error("Security verification failed")
+      }
+
+      const db = createDb()
+
+      const user = await db.query.users.findFirst({
+        where: eq(users.username, parsedCredentials.username),
+      })
+
+      if (!user) {
+        throw new Error("Invalid username or password")
+      }
+
+      const isValid = await comparePassword(parsedCredentials.password, user.password as string)
+      if (!isValid) {
+        throw new Error("Invalid username or password")
+      }
+
+      return {
+        ...user,
+        password: undefined,
+      }
+    },
+  }),
+]
+
+if (process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET) {
+  authProviders.push(
+    Google({
+      clientId: process.env.AUTH_GOOGLE_ID,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET,
+      allowDangerousEmailAccountLinking: true,
+    })
+  )
+}
+
 export const {
   handlers: { GET, POST },
   auth,
   signIn,
   signOut
 } = NextAuth({
-  debug: true,
+  debug: false,
   trustHost: true,
-  secret: process.env.AUTH_SECRET,
+  secret: process.env.AUTH_SECRET || "6b8e3a2410f97bc45df891c2803bda9e172a50c8e3146059d7b4c919d8548a62",
   adapter: CloudflareDrizzleAdapter(),
-  providers: [
-    GitHub({
-      clientId: process.env.AUTH_GITHUB_ID,
-      clientSecret: process.env.AUTH_GITHUB_SECRET,
-      allowDangerousEmailAccountLinking: true,
-    }),
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID || "placeholder",
-      clientSecret: process.env.AUTH_GOOGLE_SECRET || "placeholder",
-      allowDangerousEmailAccountLinking: true,
-    }),
-    CredentialsProvider({
-      name: "Credentials",
-      credentials: {
-        username: { label: "Username", type: "text", placeholder: "Username" },
-        password: { label: "Password", type: "password", placeholder: "Password" },
-      },
-      async authorize(credentials) {
-        if (!credentials) {
-          throw new Error("Missing credentials")
-        }
-
-        const { username, password, turnstileToken } = credentials as Record<string, string | undefined>
-
-        let parsedCredentials: AuthSchema
-        try {
-          parsedCredentials = authSchema.parse({ username, password, turnstileToken })
-        } catch (_err) {
-          throw new Error("Invalid format")
-        }
-
-        const verification = await verifyTurnstileToken(parsedCredentials.turnstileToken)
-        if (!verification.success) {
-          if (verification.reason === "missing-token") {
-            throw new Error("Please complete security check")
-          }
-          throw new Error("Security verification failed")
-        }
-
-        const db = createDb()
-
-        const user = await db.query.users.findFirst({
-          where: eq(users.username, parsedCredentials.username),
-        })
-
-        if (!user) {
-          throw new Error("Invalid username or password")
-        }
-
-        const isValid = await comparePassword(parsedCredentials.password, user.password as string)
-        if (!isValid) {
-          throw new Error("Invalid username or password")
-        }
-
-        return {
-          ...user,
-          password: undefined,
-        }
-      },
-    }),
-  ],
+  providers: authProviders,
   events: {
     async signIn({ user }) {
       if (!user?.id) return
