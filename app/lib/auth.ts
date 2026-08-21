@@ -1,17 +1,17 @@
-import NextAuth from "next-auth"
-import GitHub from "next-auth/providers/github"
-import Google from "next-auth/providers/google"
+import type { AuthConfig } from "@auth/core"
+import GitHub from "@auth/core/providers/github"
+import CredentialsProvider from "@auth/core/providers/credentials"
 import { createDb, Db } from "./db"
 import { accounts, users, roles, userRoles } from "./schema"
 import { eq, and } from "drizzle-orm"
 import { getRequestContext } from "@cloudflare/next-on-pages"
 import { Permission, hasPermission, ROLES, Role } from "./permissions"
-import CredentialsProvider from "next-auth/providers/credentials"
 import { hashPassword, comparePassword } from "@/lib/utils"
 import { authSchema, AuthSchema } from "@/lib/validation"
 import { generateAvatarUrl } from "./avatar"
 import { getUserId } from "./apiKey"
 import { verifyTurnstileToken } from "./turnstile"
+import NextAuth from "next-auth"
 
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   [ROLES.EMPEROR]: "Owner",
@@ -110,84 +110,67 @@ export async function checkPermission(permission: Permission) {
   }
 }
 
-const authProviders: any[] = [
-  GitHub({
-    clientId: process.env.AUTH_GITHUB_ID || "Ov23li8VQpR7E7Zf0AdQ",
-    clientSecret: process.env.AUTH_GITHUB_SECRET || "776bcf86d1b447cd75bb13ea2395bb1cce96096a",
-    checks: ["state"],
-    allowDangerousEmailAccountLinking: true,
-  }),
-  CredentialsProvider({
-    name: "Credentials",
-    credentials: {
-      username: { label: "Username", type: "text", placeholder: "Username" },
-      password: { label: "Password", type: "password", placeholder: "Password" },
-    },
-    async authorize(credentials) {
-      if (!credentials) {
-        throw new Error("Missing credentials")
-      }
-
-      const { username, password, turnstileToken } = credentials as Record<string, string | undefined>
-
-      let parsedCredentials: AuthSchema
-      try {
-        parsedCredentials = authSchema.parse({ username, password, turnstileToken })
-      } catch (_err) {
-        throw new Error("Invalid format")
-      }
-
-      const verification = await verifyTurnstileToken(parsedCredentials.turnstileToken)
-      if (!verification.success) {
-        if (verification.reason === "missing-token") {
-          throw new Error("Please complete security check")
-        }
-        throw new Error("Security verification failed")
-      }
-
-      const currentDb = createDb()
-
-      const user = await currentDb.query.users.findFirst({
-        where: eq(users.username, parsedCredentials.username),
-      })
-
-      if (!user) {
-        throw new Error("Invalid username or password")
-      }
-
-      const isValid = await comparePassword(parsedCredentials.password, user.password as string)
-      if (!isValid) {
-        throw new Error("Invalid username or password")
-      }
-
-      return {
-        ...user,
-        password: undefined,
-      }
-    },
-  }),
-]
-
-if (process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET) {
-  authProviders.push(
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET,
-      allowDangerousEmailAccountLinking: true,
-    })
-  )
-}
-
-export const {
-  handlers: { GET, POST },
-  auth,
-  signIn,
-  signOut
-} = NextAuth({
-  debug: true,
+export const authConfig: AuthConfig = {
   trustHost: true,
+  basePath: "/api/auth",
   secret: process.env.AUTH_SECRET || "6b8e3a2410f97bc45df891c2803bda9e172a50c8e3146059d7b4c919d8548a62",
-  providers: authProviders,
+  providers: [
+    GitHub({
+      clientId: process.env.AUTH_GITHUB_ID || "Ov23li8VQpR7E7Zf0AdQ",
+      clientSecret: process.env.AUTH_GITHUB_SECRET || "776bcf86d1b447cd75bb13ea2395bb1cce96096a",
+      checks: ["state"],
+      allowDangerousEmailAccountLinking: true,
+    }),
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        username: { label: "Username", type: "text", placeholder: "Username" },
+        password: { label: "Password", type: "password", placeholder: "Password" },
+      },
+      async authorize(credentials) {
+        if (!credentials) {
+          throw new Error("Missing credentials")
+        }
+
+        const { username, password, turnstileToken } = credentials as Record<string, string | undefined>
+
+        let parsedCredentials: AuthSchema
+        try {
+          parsedCredentials = authSchema.parse({ username, password, turnstileToken })
+        } catch (_err) {
+          throw new Error("Invalid format")
+        }
+
+        const verification = await verifyTurnstileToken(parsedCredentials.turnstileToken)
+        if (!verification.success) {
+          if (verification.reason === "missing-token") {
+            throw new Error("Please complete security check")
+          }
+          throw new Error("Security verification failed")
+        }
+
+        const currentDb = createDb()
+
+        const user = await currentDb.query.users.findFirst({
+          where: eq(users.username, parsedCredentials.username),
+        })
+
+        if (!user) {
+          throw new Error("Invalid username or password")
+        }
+
+        const isValid = await comparePassword(parsedCredentials.password, user.password as string)
+        if (!isValid) {
+          throw new Error("Invalid username or password")
+        }
+
+        return {
+          ...user,
+          password: undefined,
+        }
+      },
+    }),
+  ],
   session: {
     strategy: "jwt",
   },
@@ -338,7 +321,14 @@ export const {
       return session
     },
   },
-})
+}
+
+export const {
+  handlers: { GET, POST },
+  auth,
+  signIn,
+  signOut
+} = NextAuth(authConfig)
 
 export async function register(username: string, password: string) {
   const db = createDb()

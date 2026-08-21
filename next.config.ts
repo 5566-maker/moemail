@@ -24,8 +24,6 @@ const nextConfig = {
     AUTH_GITHUB_ID: 'Ov23li8VQpR7E7Zf0AdQ',
     AUTH_GITHUB_SECRET: '776bcf86d1b447cd75bb13ea2395bb1cce96096a',
     AUTH_TRUST_HOST: 'true',
-    NEXTAUTH_URL: 'https://auau.cc.cd',
-    AUTH_URL: 'https://auau.cc.cd',
     CUSTOM_DOMAIN: 'auau.cc.cd',
   },
   images: {
